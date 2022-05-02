@@ -2,8 +2,11 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 
@@ -31,6 +34,8 @@ type Collector struct {
 	powerUsage  *prometheus.GaugeVec
 	temperature *prometheus.GaugeVec
 	fanSpeed    *prometheus.GaugeVec
+	jobId       *prometheus.GaugeVec
+	jobUid      *prometheus.GaugeVec
 }
 
 func NewCollector() *Collector {
@@ -87,6 +92,22 @@ func NewCollector() *Collector {
 				Namespace: namespace,
 				Name:      "fanspeed_percent",
 				Help:      "Fanspeed of the GPU device as a percent of its maximum",
+			},
+			labels,
+		),
+		jobId: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "jobId",
+				Help:      "JobId number of a job currently using this GPU as reported by Slurm",
+			},
+			labels,
+		),
+		jobUid: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "jobUid",
+				Help:      "Uid number of user running jobs on this GPU",
 			},
 			labels,
 		),
@@ -180,11 +201,23 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		}
 
 		fanSpeed, err := dev.FanSpeed()
-		if err != nil {
-			log.Printf("FanSpeed() error: %v", err)
-		} else {
+		if err == nil {
 			c.fanSpeed.WithLabelValues(minor, uuid, name).Set(float64(fanSpeed))
 		}
+
+		var jobUid int64 = 0
+		var jobId int64 = 0
+		var slurmInfo string = fmt.Sprintf("/run/gpustat/%d", i)
+
+		if _, err := os.Stat(slurmInfo); err == nil {
+			content, err := ioutil.ReadFile(slurmInfo)
+			if err == nil {
+				fmt.Sscanf(string(content), "%d %d", &jobId, &jobUid)
+			}
+		}
+
+		c.jobId.WithLabelValues(minor, uuid, name).Set(float64(jobId))
+		c.jobUid.WithLabelValues(minor, uuid, name).Set(float64(jobUid))
 	}
 	c.usedMemory.Collect(ch)
 	c.totalMemory.Collect(ch)
@@ -192,6 +225,8 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	c.powerUsage.Collect(ch)
 	c.temperature.Collect(ch)
 	c.fanSpeed.Collect(ch)
+	c.jobId.Collect(ch)
+	c.jobUid.Collect(ch)
 }
 
 func main() {
