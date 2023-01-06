@@ -20,12 +20,6 @@
   version = "v1.0.0"
 
 [[projects]]
-  branch = "master"
-  name = "github.com/mindprince/gonvml"
-  packages = ["."]
-  revision = "b364b296c7320f5d3dc084aa536a3dba33b68f90"
-
-[[projects]]
   name = "github.com/prometheus/client_golang"
   packages = [
     "prometheus",

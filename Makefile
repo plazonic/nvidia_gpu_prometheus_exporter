@@ -1,7 +1,7 @@
-PKG=github.com/mindprince/nvidia_gpu_prometheus_exporter
-REGISTRY=mindprince
+PKG=github.com/plazonic/nvidia_gpu_prometheus_exporter
+REGISTRY=plazonic
 IMAGE=nvidia_gpu_prometheus_exporter
-TAG=0.1
+TAG=0.2
 
 .PHONY: build
 build:

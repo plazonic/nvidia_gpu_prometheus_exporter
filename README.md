@@ -10,11 +10,11 @@ Unlike some other similar exporters, it does not call the
 
 ## Building
 
-The repository includes `nvml.h`, so there are no special requirements from the
-build environment. `go get` should be able to build the exporter binary.
-
+E.g.
 ```
-go get github.com/mindprince/nvidia_gpu_prometheus_exporter
+export GO111MODULE=auto
+go get github.com/NVIDIA/go-nvml/pkg/nvml
+go build
 ```
 
 ## Running

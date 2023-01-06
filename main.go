@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/mindprince/gonvml"
+	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -136,8 +136,8 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	c.temperature.Reset()
 	c.fanSpeed.Reset()
 
-	numDevices, err := gonvml.DeviceCount()
-	if err != nil {
+	numDevices, err := nvml.DeviceGetCount()
+	if err != nvml.SUCCESS {
 		log.Printf("DeviceCount() error: %v", err)
 		return
 	} else {
@@ -146,62 +146,62 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	}
 
 	for i := 0; i < int(numDevices); i++ {
-		dev, err := gonvml.DeviceHandleByIndex(uint(i))
-		if err != nil {
+		dev, err := nvml.DeviceGetHandleByIndex(i)
+		if err != nvml.SUCCESS {
 			log.Printf("DeviceHandleByIndex(%d) error: %v", i, err)
 			continue
 		}
 
-		minorNumber, err := dev.MinorNumber()
-		if err != nil {
+		minorNumber, err := dev.GetMinorNumber()
+		if err != nvml.SUCCESS {
 			log.Printf("MinorNumber() error: %v", err)
 			continue
 		}
 		minor := strconv.Itoa(int(minorNumber))
 
-		uuid, err := dev.UUID()
-		if err != nil {
+		uuid, err := dev.GetUUID()
+		if err != nvml.SUCCESS {
 			log.Printf("UUID() error: %v", err)
 			continue
 		}
 
-		name, err := dev.Name()
-		if err != nil {
+		name, err := dev.GetName()
+		if err != nvml.SUCCESS {
 			log.Printf("Name() error: %v", err)
 			continue
 		}
 
-		totalMemory, usedMemory, err := dev.MemoryInfo()
-		if err != nil {
+		memory, err := dev.GetMemoryInfo()
+		if err != nvml.SUCCESS {
 			log.Printf("MemoryInfo() error: %v", err)
 		} else {
-			c.usedMemory.WithLabelValues(minor, uuid, name).Set(float64(usedMemory))
-			c.totalMemory.WithLabelValues(minor, uuid, name).Set(float64(totalMemory))
+			c.usedMemory.WithLabelValues(minor, uuid, name).Set(float64(memory.Used))
+			c.totalMemory.WithLabelValues(minor, uuid, name).Set(float64(memory.Total))
 		}
 
-		dutyCycle, _, err := dev.UtilizationRates()
-		if err != nil {
+		dutyCycle, err := dev.GetUtilizationRates()
+		if err != nvml.SUCCESS {
 			log.Printf("UtilizationRates() error: %v", err)
 		} else {
-			c.dutyCycle.WithLabelValues(minor, uuid, name).Set(float64(dutyCycle))
+			c.dutyCycle.WithLabelValues(minor, uuid, name).Set(float64(dutyCycle.Gpu))
 		}
 
-		powerUsage, err := dev.PowerUsage()
-		if err != nil {
+		powerUsage, err := dev.GetPowerUsage()
+		if err != nvml.SUCCESS {
 			log.Printf("PowerUsage() error: %v", err)
 		} else {
 			c.powerUsage.WithLabelValues(minor, uuid, name).Set(float64(powerUsage))
 		}
 
-		temperature, err := dev.Temperature()
-		if err != nil {
+		temperature, err := dev.GetTemperature(nvml.TEMPERATURE_GPU)
+		if err != nvml.SUCCESS {
 			log.Printf("Temperature() error: %v", err)
 		} else {
 			c.temperature.WithLabelValues(minor, uuid, name).Set(float64(temperature))
 		}
 
-		fanSpeed, err := dev.FanSpeed()
-		if err == nil {
+		fanSpeed, err := dev.GetFanSpeed()
+		if err == nvml.SUCCESS {
 			c.fanSpeed.WithLabelValues(minor, uuid, name).Set(float64(fanSpeed))
 		}
 
@@ -232,15 +232,15 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 func main() {
 	flag.Parse()
 
-	if err := gonvml.Initialize(); err != nil {
-		log.Fatalf("Couldn't initialize gonvml: %v. Make sure NVML is in the shared library search path.", err)
+	if err := nvml.Init(); err != nvml.SUCCESS {
+		log.Fatalf("Couldn't initialize nvml: %v. Make sure NVML is in the shared library search path.", err)
 	}
-	defer gonvml.Shutdown()
+	defer nvml.Shutdown()
 
-	if driverVersion, err := gonvml.SystemDriverVersion(); err != nil {
-		log.Printf("SystemDriverVersion() error: %v", err)
+	if driverVersion, err := nvml.SystemGetDriverVersion(); err != nvml.SUCCESS {
+		log.Printf("SystemGetDriverVersion() error: %v", err)
 	} else {
-		log.Printf("SystemDriverVersion(): %v", driverVersion)
+		log.Printf("SystemGetDriverVersion(): %v", driverVersion)
 	}
 
 	prometheus.MustRegister(NewCollector())
