@@ -12,8 +12,6 @@ Unlike some other similar exporters, it does not call the
 
 E.g.
 ```
-export GO111MODULE=auto
-go get github.com/NVIDIA/go-nvml/pkg/nvml
 go build
 ```
 

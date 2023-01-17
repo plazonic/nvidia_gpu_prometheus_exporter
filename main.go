@@ -38,6 +38,12 @@ type Collector struct {
 	jobUid      *prometheus.GaugeVec
 }
 
+type Device struct {
+	name, uuid, slurmName string
+	isMig bool
+	device nvml.Device
+}
+
 func NewCollector() *Collector {
 	return &Collector{
 		numDevices: prometheus.NewGauge(
@@ -171,53 +177,111 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			continue
 		}
 
-		memory, err := dev.GetMemoryInfo()
+		currentMig, _, err := dev.GetMigMode()
 		if err != nvml.SUCCESS {
-			log.Printf("MemoryInfo() error: %v", err)
-		} else {
-			c.usedMemory.WithLabelValues(minor, uuid, name).Set(float64(memory.Used))
-			c.totalMemory.WithLabelValues(minor, uuid, name).Set(float64(memory.Total))
-		}
-
-		dutyCycle, err := dev.GetUtilizationRates()
-		if err != nvml.SUCCESS {
-			log.Printf("UtilizationRates() error: %v", err)
-		} else {
-			c.dutyCycle.WithLabelValues(minor, uuid, name).Set(float64(dutyCycle.Gpu))
-		}
-
-		powerUsage, err := dev.GetPowerUsage()
-		if err != nvml.SUCCESS {
-			log.Printf("PowerUsage() error: %v", err)
-		} else {
-			c.powerUsage.WithLabelValues(minor, uuid, name).Set(float64(powerUsage))
-		}
-
-		temperature, err := dev.GetTemperature(nvml.TEMPERATURE_GPU)
-		if err != nvml.SUCCESS {
-			log.Printf("Temperature() error: %v", err)
-		} else {
-			c.temperature.WithLabelValues(minor, uuid, name).Set(float64(temperature))
-		}
-
-		fanSpeed, err := dev.GetFanSpeed()
-		if err == nvml.SUCCESS {
-			c.fanSpeed.WithLabelValues(minor, uuid, name).Set(float64(fanSpeed))
-		}
-
-		var jobUid int64 = 0
-		var jobId int64 = 0
-		var slurmInfo string = fmt.Sprintf("/run/gpustat/%d", i)
-
-		if _, err := os.Stat(slurmInfo); err == nil {
-			content, err := ioutil.ReadFile(slurmInfo)
-			if err == nil {
-				fmt.Sscanf(string(content), "%d %d", &jobId, &jobUid)
+			currentMig = nvml.DEVICE_MIG_DISABLE
+			if err != nvml.ERROR_NOT_SUPPORTED {
+				log.Printf("GetMigMode() error: %v", err)
 			}
 		}
 
-		c.jobId.WithLabelValues(minor, uuid, name).Set(float64(jobId))
-		c.jobUid.WithLabelValues(minor, uuid, name).Set(float64(jobUid))
+		var numMigs int = 0
+		allDevs := []Device{Device{name: name, uuid: uuid, device: dev, isMig: false, slurmName: minor}}
+		if currentMig == nvml.DEVICE_MIG_ENABLE {
+			numMigs, err = dev.GetMaxMigDeviceCount()
+			if err != nvml.SUCCESS {
+				log.Printf("GetMaxMigDeviceCount(): error: %v", err)
+			}
+			for j := 0; j < numMigs; j++ {
+				migDev, err := dev.GetMigDeviceHandleByIndex(j)
+				if err != nvml.SUCCESS {
+					log.Printf("GetMigDeviceHandleByInde(%d): error: %v", j, err)
+				} else {
+					migUuid, err := migDev.GetUUID()
+					if err != nvml.SUCCESS {
+						log.Printf("UUID(minor=%d, mig=%d): error: %v", minorNumber, j, err)
+					}
+					migName, err := migDev.GetName()
+					if err != nvml.SUCCESS {
+						log.Printf("Name(minor=%d, mig=%d): error: %v", minorNumber, j, err)
+					}
+					allDevs = append(allDevs, Device{name: migName, uuid: migUuid, device: migDev, isMig: true, slurmName: migUuid})
+				}
+			}
+		}
+
+		// check, just in case
+		if (numMigs+1) != len(allDevs) {
+			log.Printf("MIG: found %d devices but was expecting %d", len(allDevs)-1, numMigs)
+		}
+
+
+		// Fetch power/temperature/fanspeed first/once so we can reuse it for any MIG cards
+		var powerUsageAvailable bool = false
+		powerUsage, err := dev.GetPowerUsage()
+		if err != nvml.SUCCESS {
+			log.Printf("PowerUsage(minor=%s, uuid=%s) error: %v", minor, uuid, err)
+		} else {
+			powerUsageAvailable = true
+		}
+
+		var temperatureAvailable bool = false
+		temperature, err := dev.GetTemperature(nvml.TEMPERATURE_GPU)
+		if err != nvml.SUCCESS {
+			log.Printf("Temperature(minor=%s, uuid=%s) error: %v", minor, uuid, err)
+		} else {
+			temperatureAvailable = true
+		}
+
+		var fanSpeedAvailable bool = false
+		fanSpeed, err := dev.GetFanSpeed()
+		if err == nvml.SUCCESS {
+			fanSpeedAvailable = true
+		}
+		for _, oneDev := range allDevs {
+			memory, err := oneDev.device.GetMemoryInfo()
+			if err != nvml.SUCCESS {
+				log.Printf("MemoryInfo(minor=%s, uuid=%s) error: %v", minor, oneDev.uuid, err)
+			} else {
+				c.usedMemory.WithLabelValues(minor, oneDev.uuid, oneDev.name).Set(float64(memory.Used))
+				c.totalMemory.WithLabelValues(minor, oneDev.uuid, oneDev.name).Set(float64(memory.Total))
+			}
+
+			// GPU cards in MIG mode cannot report Utilization
+			if currentMig == nvml.DEVICE_MIG_DISABLE {
+				dutyCycle, err := oneDev.device.GetUtilizationRates()
+				if err == nvml.SUCCESS {
+					c.dutyCycle.WithLabelValues(minor, oneDev.uuid, oneDev.name).Set(float64(dutyCycle.Gpu))
+				} else if err != nvml.ERROR_NOT_SUPPORTED {
+					log.Printf("UtilizationRates(minor=%s, uuid=%s, a=%d) error: %v", minor, oneDev.uuid, nvml.ERROR_NOT_SUPPORTED, err)
+				}
+			}
+
+			// Common/shared values, set to the same one if available
+			if powerUsageAvailable {
+				c.powerUsage.WithLabelValues(minor, oneDev.uuid, oneDev.name).Set(float64(powerUsage))
+			}
+			if temperatureAvailable {
+				c.temperature.WithLabelValues(minor, oneDev.uuid, oneDev.name).Set(float64(temperature))
+			}
+			if fanSpeedAvailable {
+				c.fanSpeed.WithLabelValues(minor, oneDev.uuid, oneDev.name).Set(float64(fanSpeed))
+			}
+
+			var jobUid int64 = 0
+			var jobId int64 = 0
+			var slurmInfo string = fmt.Sprintf("/run/gpustat/%s", oneDev.slurmName)
+
+			if _, err := os.Stat(slurmInfo); err == nil {
+				content, err := ioutil.ReadFile(slurmInfo)
+				if err == nil {
+					fmt.Sscanf(string(content), "%d %d", &jobId, &jobUid)
+				}
+			}
+
+			c.jobId.WithLabelValues(minor, oneDev.uuid, oneDev.name).Set(float64(jobId))
+			c.jobUid.WithLabelValues(minor, oneDev.uuid, oneDev.name).Set(float64(jobUid))
+		}
 	}
 	c.usedMemory.Collect(ch)
 	c.totalMemory.Collect(ch)
