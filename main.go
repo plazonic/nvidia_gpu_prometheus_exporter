@@ -175,31 +175,31 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		if err != nvml.SUCCESS {
 			log.Printf("MinorNumber(%d) error: %v", i, err)
 			c.lastError.WithLabelValues(strconv.Itoa(i), "", "").Set(float64(err))
-			break
+			continue
 		}
 		minor := strconv.Itoa(int(minorNumber))
 
 		uuid, err := dev.GetUUID()
 		if err != nvml.SUCCESS {
-			log.Printf("UUID(%d) error: %v", minor, err)
+			log.Printf("UUID(%s) error: %v", minor, err)
 			c.lastError.WithLabelValues(minor, "", "").Set(float64(err))
-			break
+			continue
 		}
 
 		name, err := dev.GetName()
 		if err != nvml.SUCCESS {
-			log.Printf("Name(%d) error: %v", minor, err)
+			log.Printf("Name(%s) error: %v", minor, err)
 			c.lastError.WithLabelValues(minor, uuid, "").Set(float64(err))
-			break
+			continue
 		}
 
 		currentMig, _, err := dev.GetMigMode()
 		if err != nvml.SUCCESS {
 			currentMig = nvml.DEVICE_MIG_DISABLE
 			if err != nvml.ERROR_NOT_SUPPORTED {
-				log.Printf("GetMigMode(%d) error: %v", minor, err)
+				log.Printf("GetMigMode(%s) error: %v", minor, err)
 				c.lastError.WithLabelValues(minor, uuid, name).Set(float64(err))
-				break
+				continue
 			}
 		}
 
@@ -208,7 +208,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		if currentMig == nvml.DEVICE_MIG_ENABLE {
 			numMigs, err = dev.GetMaxMigDeviceCount()
 			if err != nvml.SUCCESS {
-				log.Printf("GetMaxMigDeviceCount(): error: %v", err)
+				log.Printf("GetMaxMigDeviceCount(%s): error: %v", minor, err)
 			}
 			for j := 0; j < numMigs; j++ {
 				migDev, err := dev.GetMigDeviceHandleByIndex(j)
@@ -239,7 +239,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		if err != nvml.SUCCESS {
 			log.Printf("PowerUsage(minor=%s, uuid=%s) error: %v", minor, uuid, err)
 			c.lastError.WithLabelValues(minor, uuid, name).Set(float64(err))
-			break
+			continue
 		} else {
 			powerUsageAvailable = true
 		}
@@ -249,7 +249,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		if err != nvml.SUCCESS {
 			log.Printf("Temperature(minor=%s, uuid=%s) error: %v", minor, uuid, err)
 			c.lastError.WithLabelValues(minor, uuid, name).Set(float64(err))
-			break
+			continue
 		} else {
 			temperatureAvailable = true
 		}
