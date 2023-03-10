@@ -173,28 +173,31 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 
 		minorNumber, err := dev.GetMinorNumber()
 		if err != nvml.SUCCESS {
-			log.Printf("MinorNumber() error: %v", err)
-			continue
+			log.Printf("MinorNumber(%d) error: %v", i, err)
+			c.lastError.WithLabelValues(strconv.Itoa(i), "", "").Set(float64(err))
+			break
 		}
 		minor := strconv.Itoa(int(minorNumber))
 
 		uuid, err := dev.GetUUID()
 		if err != nvml.SUCCESS {
-			log.Printf("UUID() error: %v", err)
-			continue
+			log.Printf("UUID(%d) error: %v", minor, err)
+			c.lastError.WithLabelValues(minor, "", "").Set(float64(err))
+			break
 		}
 
 		name, err := dev.GetName()
 		if err != nvml.SUCCESS {
-			log.Printf("Name() error: %v", err)
-			continue
+			log.Printf("Name(%d) error: %v", minor, err)
+			c.lastError.WithLabelValues(minor, uuid, "").Set(float64(err))
+			break
 		}
 
 		currentMig, _, err := dev.GetMigMode()
 		if err != nvml.SUCCESS {
 			currentMig = nvml.DEVICE_MIG_DISABLE
 			if err != nvml.ERROR_NOT_SUPPORTED {
-				log.Printf("GetMigMode() error: %v", err)
+				log.Printf("GetMigMode(%d) error: %v", minor, err)
 				c.lastError.WithLabelValues(minor, uuid, name).Set(float64(err))
 				break
 			}
