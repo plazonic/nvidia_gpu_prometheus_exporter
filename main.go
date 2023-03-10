@@ -310,6 +310,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	c.powerUsage.Collect(ch)
 	c.temperature.Collect(ch)
 	c.fanSpeed.Collect(ch)
+	c.lastError.Collect(ch)
 	c.jobId.Collect(ch)
 	c.jobUid.Collect(ch)
 }
