@@ -34,14 +34,15 @@ type Collector struct {
 	powerUsage  *prometheus.GaugeVec
 	temperature *prometheus.GaugeVec
 	fanSpeed    *prometheus.GaugeVec
+	lastError   *prometheus.GaugeVec
 	jobId       *prometheus.GaugeVec
 	jobUid      *prometheus.GaugeVec
 }
 
 type Device struct {
 	name, uuid, slurmName string
-	isMig bool
-	device nvml.Device
+	isMig                 bool
+	device                nvml.Device
 }
 
 func NewCollector() *Collector {
@@ -101,6 +102,14 @@ func NewCollector() *Collector {
 			},
 			labels,
 		),
+		lastError: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "last_error",
+				Help:      "Last error returned while trying to get stats from this GPU",
+			},
+			labels,
+		),
 		jobId: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
@@ -128,6 +137,7 @@ func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 	c.powerUsage.Describe(ch)
 	c.temperature.Describe(ch)
 	c.fanSpeed.Describe(ch)
+	c.lastError.Describe(ch)
 }
 
 func (c *Collector) Collect(ch chan<- prometheus.Metric) {
@@ -141,6 +151,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	c.powerUsage.Reset()
 	c.temperature.Reset()
 	c.fanSpeed.Reset()
+	c.lastError.Reset()
 
 	numDevices, err := nvml.DeviceGetCount()
 	if err != nvml.SUCCESS {
@@ -152,6 +163,8 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	}
 
 	for i := 0; i < int(numDevices); i++ {
+		//var lasterror = nvmlReturn_t = nvml.SUCCESS
+
 		dev, err := nvml.DeviceGetHandleByIndex(i)
 		if err != nvml.SUCCESS {
 			log.Printf("DeviceHandleByIndex(%d) error: %v", i, err)
@@ -182,6 +195,8 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			currentMig = nvml.DEVICE_MIG_DISABLE
 			if err != nvml.ERROR_NOT_SUPPORTED {
 				log.Printf("GetMigMode() error: %v", err)
+				c.lastError.WithLabelValues(minor, uuid, name).Set(float64(err))
+				break
 			}
 		}
 
@@ -211,16 +226,17 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		}
 
 		// check, just in case
-		if (numMigs+1) != len(allDevs) {
+		if (numMigs + 1) != len(allDevs) {
 			log.Printf("MIG: found %d devices but was expecting %d", len(allDevs)-1, numMigs)
 		}
-
 
 		// Fetch power/temperature/fanspeed first/once so we can reuse it for any MIG cards
 		var powerUsageAvailable bool = false
 		powerUsage, err := dev.GetPowerUsage()
 		if err != nvml.SUCCESS {
 			log.Printf("PowerUsage(minor=%s, uuid=%s) error: %v", minor, uuid, err)
+			c.lastError.WithLabelValues(minor, uuid, name).Set(float64(err))
+			break
 		} else {
 			powerUsageAvailable = true
 		}
@@ -229,6 +245,8 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		temperature, err := dev.GetTemperature(nvml.TEMPERATURE_GPU)
 		if err != nvml.SUCCESS {
 			log.Printf("Temperature(minor=%s, uuid=%s) error: %v", minor, uuid, err)
+			c.lastError.WithLabelValues(minor, uuid, name).Set(float64(err))
+			break
 		} else {
 			temperatureAvailable = true
 		}
