@@ -22,7 +22,10 @@ const (
 var (
 	addr = flag.String("web.listen-address", ":9445", "Address to listen on for web interface and telemetry.")
 
-	labels = []string{"minor_number", "uuid", "name"}
+	labels         = []string{"minor_number", "uuid", "name"}
+	eccLabels      = []string{"minor_number", "uuid", "name", "error", "counter"}
+	eccErrorType   = []string{nvml.MEMORY_ERROR_TYPE_CORRECTED: "corrected", nvml.MEMORY_ERROR_TYPE_UNCORRECTED: "uncorrected"}
+	eccCounterType = []string{nvml.VOLATILE_ECC: "volatile", nvml.AGGREGATE_ECC: "aggregate"}
 )
 
 type Collector struct {
@@ -34,6 +37,7 @@ type Collector struct {
 	powerUsage  *prometheus.GaugeVec
 	temperature *prometheus.GaugeVec
 	fanSpeed    *prometheus.GaugeVec
+	eccErrors   *prometheus.GaugeVec
 	lastError   *prometheus.GaugeVec
 	jobId       *prometheus.GaugeVec
 	jobUid      *prometheus.GaugeVec
@@ -101,6 +105,14 @@ func NewCollector() *Collector {
 				Help:      "Fanspeed of the GPU device as a percent of its maximum",
 			},
 			labels,
+		),
+		eccErrors: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "ecc_errors",
+				Help:      "ECC Errors, with labels describing what they are",
+			},
+			eccLabels,
 		),
 		lastError: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
@@ -259,6 +271,17 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		if err == nvml.SUCCESS {
 			fanSpeedAvailable = true
 		}
+
+		for _, err_type := range [2]nvml.MemoryErrorType{nvml.MEMORY_ERROR_TYPE_CORRECTED, nvml.MEMORY_ERROR_TYPE_UNCORRECTED} {
+			for _, count_type := range []nvml.EccCounterType{nvml.VOLATILE_ECC, nvml.AGGREGATE_ECC} {
+				errCount, err := dev.GetTotalEccErrors(err_type, count_type)
+				if err == nvml.SUCCESS {
+					c.eccErrors.WithLabelValues(minor, uuid, name, eccErrorType[err_type], eccCounterType[count_type]).Set(float64(errCount))
+				} else if err != nvml.ERROR_NOT_SUPPORTED {
+					log.Printf("GetTotalEccErrors(minor=%s, uuid=%s) error: %v", minor, uuid, err)
+				}
+			}
+		}
 		for _, oneDev := range allDevs {
 			memory, err := oneDev.device.GetMemoryInfo()
 			if err != nvml.SUCCESS {
@@ -310,6 +333,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	c.powerUsage.Collect(ch)
 	c.temperature.Collect(ch)
 	c.fanSpeed.Collect(ch)
+	c.eccErrors.Collect(ch)
 	c.lastError.Collect(ch)
 	c.jobId.Collect(ch)
 	c.jobUid.Collect(ch)
