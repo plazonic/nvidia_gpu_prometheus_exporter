@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -20,7 +19,8 @@ const (
 )
 
 var (
-	addr = flag.String("web.listen-address", ":9445", "Address to listen on for web interface and telemetry.")
+	addr                   = flag.String("web.listen-address", ":9445", "Address to listen on for web interface and telemetry.")
+	disableExporterMetrics = flag.Bool("web.disable-exporter-metrics", false, "Exclude metrics about the exporter itself (promhttp_*, process_*, go_*)")
 
 	labels         = []string{"ordinal", "minor_number", "uuid", "name"}
 	eccLabels      = []string{"ordinal", "minor_number", "uuid", "name", "error", "counter"}
@@ -329,7 +329,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 				}
 			}
 			if slurmInfo != "" {
-				content, err := ioutil.ReadFile(slurmInfo)
+				content, err := os.ReadFile(slurmInfo)
 				if err == nil {
 					fmt.Sscanf(string(content), "%d %d", &jobId, &jobUid)
 				}
@@ -351,6 +351,23 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	c.jobUid.Collect(ch)
 }
 
+func metricsHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		registry := prometheus.NewRegistry()
+
+		registry.MustRegister(NewCollector())
+
+		gatherers := prometheus.Gatherers{registry}
+		if !*disableExporterMetrics {
+			gatherers = append(gatherers, prometheus.DefaultGatherer)
+		}
+
+		// Delegate http serving to Prometheus client library, which will call collector.Collect.
+		h := promhttp.HandlerFor(gatherers, promhttp.HandlerOpts{})
+		h.ServeHTTP(w, r)
+	}
+}
+
 func main() {
 	flag.Parse()
 
@@ -365,8 +382,9 @@ func main() {
 		log.Printf("SystemGetDriverVersion(): %v", driverVersion)
 	}
 
-	prometheus.MustRegister(NewCollector())
+	metricsEndpoint := "/metrics"
+	http.Handle(metricsEndpoint, metricsHandler())
 
 	// Serve on all paths under addr
-	log.Fatalf("ListenAndServe error: %v", http.ListenAndServe(*addr, promhttp.Handler()))
+	log.Fatalf("ListenAndServe error: %v", http.ListenAndServe(*addr, nil))
 }
