@@ -49,6 +49,8 @@ jobs:
       with:
         name: nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}
 
+    - name: Make artifact executable
+      run: chmod +x nvml_exporter
 
     - name: Create Release
       id: create_release
