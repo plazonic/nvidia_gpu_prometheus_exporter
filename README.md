@@ -1,4 +1,4 @@
-![GitHub Actions](https://img.shields.io/github/actions/workflow/status/p-doom/nvidia_gpu_prometheus_exporter/release.yml?branch=master&label=CI&logo=github)
+![GitHub Actions](https://img.shields.io/github/actions/workflow/status/p-doom/nvml_exporter/release.yml?branch=master&label=CI&logo=github)
 
 
 NVIDIA GPU Prometheus Exporter
