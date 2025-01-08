@@ -30,5 +30,5 @@ To make sure that the exporter can access the NVML libraries, either add them
 to the search path for shared libraries. Or set `LD_LIBRARY_PATH` to point to
 their location.
 
-By default the metrics are exposed on port `9445`. This can be updated using
-the `-web.listen-address` flag.
+By default the metrics are exposed on `localhost:9445/metrics`. The port can be
+modified using the `-web.listen-address` flag.
