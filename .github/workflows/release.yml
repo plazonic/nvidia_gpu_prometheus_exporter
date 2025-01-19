@@ -73,5 +73,5 @@ jobs:
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
         asset_path: ./nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}.tar.gz
-        asset_name: nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}
+        asset_name: nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}.tar.gz
         asset_content_type: application/octet-stream
