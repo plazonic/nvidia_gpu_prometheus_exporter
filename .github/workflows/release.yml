@@ -54,6 +54,8 @@ jobs:
 
     - name: Create tar archive
       run: tar -czvf nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}.tar.gz nvml_exporter
+      
+    - name: Create Release
       uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -69,7 +71,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./nvml_exporter
+        asset_path: ./nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}.tar.gz
         asset_name: nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}
         asset_content_type: application/octet-stream
-asset_path: ./nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}.tar.gz
