@@ -26,7 +26,7 @@ jobs:
       run: echo "::set-output name=arch::$(uname -m)"
 
     - name: Build
-      run: CGO_ENABLED=0 go build -o nvml_exporter
+      run: go build -o nvml_exporter
 
     - name: Upload artifact
       uses: actions/upload-artifact@v3
