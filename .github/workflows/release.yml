@@ -56,6 +56,7 @@ jobs:
       run: tar -czvf nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}.tar.gz nvml_exporter
       
     - name: Create Release
+      id: create_release
       uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
