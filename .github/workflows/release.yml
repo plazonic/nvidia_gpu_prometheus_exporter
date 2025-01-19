@@ -52,8 +52,11 @@ jobs:
     - name: Make artifact executable
       run: chmod +x nvml_exporter
 
+    - name: Rename executable
+      run: mv nvml_exporter nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}
+
     - name: Create tar archive
-      run: tar -czvf nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}.tar.gz nvml_exporter
+      run: tar -czvf nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}.tar.gz nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}
       
     - name: Create Release
       id: create_release
