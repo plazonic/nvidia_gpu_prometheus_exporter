@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
@@ -331,12 +332,20 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			if slurmInfo != "" {
 				content, err := os.ReadFile(slurmInfo)
 				if err == nil {
-					fmt.Sscanf(string(content), "%d %d", &jobId, &jobUid)
+					if strings.Contains(string(content), " ") {
+						fmt.Sscanf(string(content), "%d %d", &jobId, &jobUid)
+					} else {
+						fmt.Sscanf(string(content), "%d", &jobId)
+					}
 				}
 			}
 
-			c.jobId.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name).Set(float64(jobId))
-			c.jobUid.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name).Set(float64(jobUid))
+			if jobId != 0 {
+				c.jobId.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name).Set(float64(jobId))
+			}
+			if jobUid != 0 {
+				c.jobUid.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name).Set(float64(jobUid))
+			}
 		}
 	}
 	c.usedMemory.Collect(ch)
