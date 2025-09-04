@@ -23,7 +23,7 @@ var (
 	addr                   = flag.String("web.listen-address", ":9445", "Address to listen on for web interface and telemetry.")
 	disableExporterMetrics = flag.Bool("web.disable-exporter-metrics", false, "Exclude metrics about the exporter itself (promhttp_*, process_*, go_*)")
 
-	labels         = []string{"ordinal", "minor_number", "uuid", "name"}
+	labels         = []string{"ordinal", "minor_number", "uuid", "name", "GPU_I_ID"}
 	eccLabels      = []string{"ordinal", "minor_number", "uuid", "name", "error", "counter"}
 	eccErrorType   = []string{nvml.MEMORY_ERROR_TYPE_CORRECTED: "corrected", nvml.MEMORY_ERROR_TYPE_UNCORRECTED: "uncorrected"}
 	eccCounterType = []string{nvml.VOLATILE_ECC: "volatile", nvml.AGGREGATE_ECC: "aggregate"}
@@ -45,9 +45,11 @@ type Collector struct {
 }
 
 type Device struct {
-	name, uuid, ordinal string
-	isMig               bool
-	device              nvml.Device
+	name       string
+	uuid       string
+	ordinal    string
+	instanceId string
+	device     nvml.Device
 }
 
 func NewCollector() *Collector {
@@ -189,7 +191,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		minorNumber, err := dev.GetMinorNumber()
 		if err != nvml.SUCCESS {
 			log.Printf("MinorNumber(%d) error: %v", i, err)
-			c.lastError.WithLabelValues(ordinal, "", "", "").Set(float64(err))
+			c.lastError.WithLabelValues(ordinal, "", "", "", "").Set(float64(err))
 			continue
 		}
 		minor := strconv.Itoa(int(minorNumber))
@@ -197,14 +199,14 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		uuid, err := dev.GetUUID()
 		if err != nvml.SUCCESS {
 			log.Printf("UUID(%s) error: %v", minor, err)
-			c.lastError.WithLabelValues(ordinal, minor, "", "").Set(float64(err))
+			c.lastError.WithLabelValues(ordinal, minor, "", "", "").Set(float64(err))
 			continue
 		}
 
 		name, err := dev.GetName()
 		if err != nvml.SUCCESS {
 			log.Printf("Name(%s) error: %v", minor, err)
-			c.lastError.WithLabelValues(ordinal, minor, uuid, "").Set(float64(err))
+			c.lastError.WithLabelValues(ordinal, minor, uuid, "", "").Set(float64(err))
 			continue
 		}
 
@@ -213,13 +215,13 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			currentMig = nvml.DEVICE_MIG_DISABLE
 			if err != nvml.ERROR_NOT_SUPPORTED {
 				log.Printf("GetMigMode(%s) error: %v", minor, err)
-				c.lastError.WithLabelValues(ordinal, minor, uuid, name).Set(float64(err))
+				c.lastError.WithLabelValues(ordinal, minor, uuid, name, "").Set(float64(err))
 				continue
 			}
 		}
 
 		var numMigs int = 0
-		allDevs := []Device{Device{name: name, uuid: uuid, device: dev, isMig: false, ordinal: ordinal}}
+		allDevs := []Device{Device{name: name, uuid: uuid, device: dev, instanceId: "", ordinal: ordinal}}
 		if currentMig == nvml.DEVICE_MIG_ENABLE {
 			numMigs, err = dev.GetMaxMigDeviceCount()
 			if err != nvml.SUCCESS {
@@ -236,7 +238,11 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 					if err != nvml.SUCCESS {
 						log.Printf("Name(minor=%d, mig=%d): error: %v", minorNumber, j, err)
 					}
-					allDevs = append(allDevs, Device{name: migName, uuid: migUuid, device: migDev, isMig: true, ordinal: ""})
+					migInstanceId, err := migDev.GetGpuInstanceId()
+					if err != nvml.SUCCESS {
+						log.Printf("Name(minor=%d, mig=%d): error: %v", minorNumber, j, err)
+					}
+					allDevs = append(allDevs, Device{name: migName, uuid: migUuid, device: migDev, ordinal: ordinal, instanceId: strconv.Itoa(migInstanceId)})
 				} else if err != nvml.ERROR_NOT_FOUND {
 					log.Printf("GetMigDeviceHandleByInde(%d): error: %v", j, err)
 				}
@@ -248,7 +254,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		powerUsage, err := dev.GetPowerUsage()
 		if err != nvml.SUCCESS {
 			log.Printf("PowerUsage(minor=%s, uuid=%s) error: %v", minor, uuid, err)
-			c.lastError.WithLabelValues(ordinal, minor, uuid, name).Set(float64(err))
+			c.lastError.WithLabelValues(ordinal, minor, uuid, name, "").Set(float64(err))
 			continue
 		} else {
 			powerUsageAvailable = true
@@ -258,7 +264,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		temperature, err := dev.GetTemperature(nvml.TEMPERATURE_GPU)
 		if err != nvml.SUCCESS {
 			log.Printf("Temperature(minor=%s, uuid=%s) error: %v", minor, uuid, err)
-			c.lastError.WithLabelValues(ordinal, minor, uuid, name).Set(float64(err))
+			c.lastError.WithLabelValues(ordinal, minor, uuid, name, "").Set(float64(err))
 			continue
 		} else {
 			temperatureAvailable = true
@@ -285,15 +291,15 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			if err != nvml.SUCCESS {
 				log.Printf("MemoryInfo(minor=%s, uuid=%s) error: %v", minor, oneDev.uuid, err)
 			} else {
-				c.usedMemory.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name).Set(float64(memory.Used))
-				c.totalMemory.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name).Set(float64(memory.Total))
+				c.usedMemory.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(float64(memory.Used))
+				c.totalMemory.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(float64(memory.Total))
 			}
 
 			// GPU cards in MIG mode cannot report Utilization
 			if currentMig == nvml.DEVICE_MIG_DISABLE {
 				dutyCycle, err := oneDev.device.GetUtilizationRates()
 				if err == nvml.SUCCESS {
-					c.dutyCycle.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name).Set(float64(dutyCycle.Gpu))
+					c.dutyCycle.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(float64(dutyCycle.Gpu))
 				} else if err != nvml.ERROR_NOT_SUPPORTED {
 					log.Printf("UtilizationRates(minor=%s, uuid=%s, a=%d) error: %v", minor, oneDev.uuid, nvml.ERROR_NOT_SUPPORTED, err)
 				}
@@ -301,13 +307,13 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 
 			// Common/shared values, set to the same one if available
 			if powerUsageAvailable {
-				c.powerUsage.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name).Set(float64(powerUsage))
+				c.powerUsage.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(float64(powerUsage))
 			}
 			if temperatureAvailable {
-				c.temperature.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name).Set(float64(temperature))
+				c.temperature.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(float64(temperature))
 			}
 			if fanSpeedAvailable {
-				c.fanSpeed.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name).Set(float64(fanSpeed))
+				c.fanSpeed.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(float64(fanSpeed))
 			}
 
 			var jobUid int64 = 0
@@ -316,7 +322,11 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 
 			if _, err := os.Stat(slurmInfo); err != nil {
 				if oneDev.ordinal != "" {
-					slurmInfo = fmt.Sprintf("/run/gpustat/%s", oneDev.ordinal)
+					if oneDev.instanceId != "" {
+						slurmInfo = fmt.Sprintf("/run/gpustat/%s.%s", ordinal, oneDev.instanceId)
+					} else {
+						slurmInfo = fmt.Sprintf("/run/gpustat/%s", oneDev.ordinal)
+					}
 					if _, err := os.Stat(slurmInfo); err != nil {
 						slurmInfo = ""
 					}
@@ -336,10 +346,10 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			}
 
 			if jobId != 0 {
-				c.jobId.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name).Set(float64(jobId))
+				c.jobId.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(float64(jobId))
 			}
 			if jobUid != 0 {
-				c.jobUid.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name).Set(float64(jobUid))
+				c.jobUid.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(float64(jobUid))
 			}
 		}
 	}
