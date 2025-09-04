@@ -31,7 +31,7 @@ jobs:
     - name: Upload artifact
       uses: actions/upload-artifact@v3
       with:
-        name: nvml_exporter-v0.2.0-${{ steps.get_arch.outputs.arch }}
+        name: nvml_exporter-v0.2.1-${{ steps.get_arch.outputs.arch }}
         path: nvml_exporter
 
   release:
@@ -47,16 +47,16 @@ jobs:
     - name: Download artifact
       uses: actions/download-artifact@v3
       with:
-        name: nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}
+        name: nvml_exporter-v0.2.1-${{ needs.build.outputs.arch }}
 
     - name: Make artifact executable
       run: chmod +x nvml_exporter
 
     - name: Rename executable
-      run: mv nvml_exporter nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}
+      run: mv nvml_exporter nvml_exporter-v0.2.1-${{ needs.build.outputs.arch }}
 
     - name: Create tar archive
-      run: tar -czvf nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}.tar.gz nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}
+      run: tar -czvf nvml_exporter-v0.2.1-${{ needs.build.outputs.arch }}.tar.gz nvml_exporter-v0.2.1-${{ needs.build.outputs.arch }}
       
     - name: Create Release
       id: create_release
@@ -64,8 +64,8 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: v0.2.0
-        release_name: Release v0.2.0
+        tag_name: v0.2.1
+        release_name: Release v0.2.1
         draft: false
         prerelease: false
 
@@ -75,6 +75,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}.tar.gz
-        asset_name: nvml_exporter-v0.2.0-${{ needs.build.outputs.arch }}.tar.gz
+        asset_path: ./nvml_exporter-v0.2.1-${{ needs.build.outputs.arch }}.tar.gz
+        asset_name: nvml_exporter-v0.2.1-${{ needs.build.outputs.arch }}.tar.gz
         asset_content_type: application/octet-stream
