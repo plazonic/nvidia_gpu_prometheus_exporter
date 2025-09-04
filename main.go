@@ -227,9 +227,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			}
 			for j := 0; j < numMigs; j++ {
 				migDev, err := dev.GetMigDeviceHandleByIndex(j)
-				if err != nvml.SUCCESS {
-					log.Printf("GetMigDeviceHandleByInde(%d): error: %v", j, err)
-				} else {
+				if err == nvml.SUCCESS {
 					migUuid, err := migDev.GetUUID()
 					if err != nvml.SUCCESS {
 						log.Printf("UUID(minor=%d, mig=%d): error: %v", minorNumber, j, err)
@@ -239,13 +237,10 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 						log.Printf("Name(minor=%d, mig=%d): error: %v", minorNumber, j, err)
 					}
 					allDevs = append(allDevs, Device{name: migName, uuid: migUuid, device: migDev, isMig: true, ordinal: ""})
+				} else if err != nvml.ERROR_NOT_FOUND {
+					log.Printf("GetMigDeviceHandleByInde(%d): error: %v", j, err)
 				}
 			}
-		}
-
-		// check, just in case
-		if (numMigs + 1) != len(allDevs) {
-			log.Printf("MIG: found %d devices but was expecting %d", len(allDevs)-1, numMigs)
 		}
 
 		// Fetch power/temperature/fanspeed first/once so we can reuse it for any MIG cards
