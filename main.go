@@ -24,6 +24,7 @@ var (
 	disableExporterMetrics = flag.Bool("web.disable-exporter-metrics", false, "Exclude metrics about the exporter itself (promhttp_*, process_*, go_*)")
 
 	labels         = []string{"ordinal", "minor_number", "uuid", "name", "GPU_I_ID"}
+	labelsJobInfo  = []string{"ordinal", "minor_number", "uuid", "name", "GPU_I_ID", "jobid", "userid"}
 	eccLabels      = []string{"ordinal", "minor_number", "uuid", "name", "error", "counter"}
 	eccErrorType   = []string{nvml.MEMORY_ERROR_TYPE_CORRECTED: "corrected", nvml.MEMORY_ERROR_TYPE_UNCORRECTED: "uncorrected"}
 	eccCounterType = []string{nvml.VOLATILE_ECC: "volatile", nvml.AGGREGATE_ECC: "aggregate"}
@@ -67,7 +68,7 @@ func NewCollector() *Collector {
 				Name:      "memory_used_bytes",
 				Help:      "Memory used by the GPU device in bytes",
 			},
-			labels,
+			labelsJobInfo,
 		),
 		totalMemory: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
@@ -75,7 +76,7 @@ func NewCollector() *Collector {
 				Name:      "memory_total_bytes",
 				Help:      "Total memory of the GPU device in bytes",
 			},
-			labels,
+			labelsJobInfo,
 		),
 		dutyCycle: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
@@ -83,7 +84,7 @@ func NewCollector() *Collector {
 				Name:      "duty_cycle",
 				Help:      "Percent of time over the past sample period during which one or more kernels were executing on the GPU device",
 			},
-			labels,
+			labelsJobInfo,
 		),
 		powerUsage: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
@@ -91,7 +92,7 @@ func NewCollector() *Collector {
 				Name:      "power_usage_milliwatts",
 				Help:      "Power usage of the GPU device in milliwatts",
 			},
-			labels,
+			labelsJobInfo,
 		),
 		temperature: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
@@ -99,7 +100,7 @@ func NewCollector() *Collector {
 				Name:      "temperature_celsius",
 				Help:      "Temperature of the GPU device in celsius",
 			},
-			labels,
+			labelsJobInfo,
 		),
 		fanSpeed: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
@@ -107,7 +108,7 @@ func NewCollector() *Collector {
 				Name:      "fanspeed_percent",
 				Help:      "Fanspeed of the GPU device as a percent of its maximum",
 			},
-			labels,
+			labelsJobInfo,
 		),
 		eccErrors: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
@@ -287,37 +288,8 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			}
 		}
 		for _, oneDev := range allDevs {
-			memory, err := oneDev.device.GetMemoryInfo()
-			if err != nvml.SUCCESS {
-				log.Printf("MemoryInfo(minor=%s, uuid=%s) error: %v", minor, oneDev.uuid, err)
-			} else {
-				c.usedMemory.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(float64(memory.Used))
-				c.totalMemory.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(float64(memory.Total))
-			}
-
-			// GPU cards in MIG mode cannot report Utilization
-			if currentMig == nvml.DEVICE_MIG_DISABLE {
-				dutyCycle, err := oneDev.device.GetUtilizationRates()
-				if err == nvml.SUCCESS {
-					c.dutyCycle.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(float64(dutyCycle.Gpu))
-				} else if err != nvml.ERROR_NOT_SUPPORTED {
-					log.Printf("UtilizationRates(minor=%s, uuid=%s, a=%d) error: %v", minor, oneDev.uuid, nvml.ERROR_NOT_SUPPORTED, err)
-				}
-			}
-
-			// Common/shared values, set to the same one if available
-			if powerUsageAvailable {
-				c.powerUsage.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(float64(powerUsage))
-			}
-			if temperatureAvailable {
-				c.temperature.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(float64(temperature))
-			}
-			if fanSpeedAvailable {
-				c.fanSpeed.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(float64(fanSpeed))
-			}
-
-			var jobUid int64 = 0
-			var jobId int64 = 0
+			var jobUid string = ""
+			var jobId string = ""
 			var slurmInfo string = fmt.Sprintf("/run/gpustat/%s", oneDev.uuid)
 
 			if _, err := os.Stat(slurmInfo); err != nil {
@@ -334,9 +306,19 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 					slurmInfo = ""
 				}
 			}
+
 			if slurmInfo != "" {
 				content, err := os.ReadFile(slurmInfo)
 				if err == nil {
+					job_user := strings.Split(strings.TrimSpace(string(content)), " ")
+					if len(job_user) <= 2 {
+						jobId = job_user[0]
+						if len(job_user) == 2 {
+							jobUid = job_user[1]
+						}
+					} else {
+						log.Printf("Invalid %s content: %s", slurmInfo, string(content))
+					}
 					if strings.Contains(string(content), " ") {
 						fmt.Sscanf(string(content), "%d %d", &jobId, &jobUid)
 					} else {
@@ -345,11 +327,48 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 				}
 			}
 
-			if jobId != 0 {
-				c.jobId.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(float64(jobId))
+			if jobId != "" {
+				if f, err := strconv.ParseFloat(jobId, 64); err == nil {
+					c.jobId.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(f)
+				} else {
+					log.Printf("Invalid %s content for jobid: %s (%s)", slurmInfo, jobId, err)
+				}
 			}
-			if jobUid != 0 {
-				c.jobUid.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(float64(jobUid))
+			if jobUid != "" {
+				if f, err := strconv.ParseFloat(jobUid, 64); err == nil {
+					c.jobUid.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(f)
+				} else {
+					log.Printf("Invalid %s content for jobuid: %s (%s)", slurmInfo, jobUid, err)
+				}
+			}
+
+			memory, err := oneDev.device.GetMemoryInfo()
+			if err != nvml.SUCCESS {
+				log.Printf("MemoryInfo(minor=%s, uuid=%s) error: %v", minor, oneDev.uuid, err)
+			} else {
+				c.usedMemory.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(float64(memory.Used))
+				c.totalMemory.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(float64(memory.Total))
+			}
+
+			// GPU cards in MIG mode cannot report Utilization
+			if currentMig == nvml.DEVICE_MIG_DISABLE {
+				dutyCycle, err := oneDev.device.GetUtilizationRates()
+				if err == nvml.SUCCESS {
+					c.dutyCycle.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(float64(dutyCycle.Gpu))
+				} else if err != nvml.ERROR_NOT_SUPPORTED {
+					log.Printf("UtilizationRates(minor=%s, uuid=%s, a=%d) error: %v", minor, oneDev.uuid, nvml.ERROR_NOT_SUPPORTED, err)
+				}
+			}
+
+			// Common/shared values, set to the same one if available
+			if powerUsageAvailable {
+				c.powerUsage.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(float64(powerUsage))
+			}
+			if temperatureAvailable {
+				c.temperature.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(float64(temperature))
+			}
+			if fanSpeedAvailable {
+				c.fanSpeed.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(float64(fanSpeed))
 			}
 		}
 	}
