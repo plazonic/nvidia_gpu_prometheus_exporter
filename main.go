@@ -132,7 +132,7 @@ func NewCollector() *Collector {
 				Name:      "jobId",
 				Help:      "JobId number of a job currently using this GPU as reported by Slurm",
 			},
-			labels,
+			labelsJobInfo,
 		),
 		jobUid: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
@@ -140,7 +140,7 @@ func NewCollector() *Collector {
 				Name:      "jobUid",
 				Help:      "Uid number of user running jobs on this GPU",
 			},
-			labels,
+			labelsJobInfo,
 		),
 	}
 }
@@ -329,14 +329,14 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 
 			if jobId != "" {
 				if f, err := strconv.ParseFloat(jobId, 64); err == nil {
-					c.jobId.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(f)
+					c.jobId.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(f)
 				} else {
 					log.Printf("Invalid %s content for jobid: %s (%s)", slurmInfo, jobId, err)
 				}
 			}
 			if jobUid != "" {
 				if f, err := strconv.ParseFloat(jobUid, 64); err == nil {
-					c.jobUid.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId).Set(f)
+					c.jobUid.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(f)
 				} else {
 					log.Printf("Invalid %s content for jobuid: %s (%s)", slurmInfo, jobUid, err)
 				}
