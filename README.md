@@ -15,7 +15,7 @@ This Exporter is a fork of https://github.com/mindprince/nvidia_gpu_prometheus_e
 - added parsing of /run/gpustat/XX for jobid and uid of the user running on the GPU. Slurm scripts that take advantage of this are available on [jobstats website](https://github.com/PrincetonUniversity/jobstats).
 - switched from [Go bindings](https://github.com/mindprince/gonvml) to [NVIDIA Go NVML bindings](github.com/NVIDIA/go-nvml)
 - added support for MIG instance autodetection and stats
-
+- for Hopper and newer GPUs it now also provides [GPM](https://docs.nvidia.com/deploy/nvml-api/group__GPM.html) based metrics, like SM utilization, occupancy and a few others. To disable these metrics use `-disable.gpm` option.
 ## Building
 
 E.g.

@@ -17,32 +17,56 @@ import (
 
 const (
 	namespace = "nvidia_gpu"
+
+	GPM_DISABLED        = 0
+	GPM_NO_DATA         = 1
+	GPM_SAMPLE1_ONLY    = 2
+	GPM_SAMPLE1_SAMPLE2 = 3
+	GPM_SAMPLE2_SAMPLE1 = 4
 )
 
 var (
 	addr                   = flag.String("web.listen-address", ":9445", "Address to listen on for web interface and telemetry.")
 	disableExporterMetrics = flag.Bool("web.disable-exporter-metrics", false, "Exclude metrics about the exporter itself (promhttp_*, process_*, go_*)")
+	disableGpm             = flag.Bool("disable.gpm", false, "Disable GPM metrics (which are available on Hopper and newer GPUs).")
 
 	labels         = []string{"ordinal", "minor_number", "uuid", "name", "GPU_I_ID"}
 	labelsJobInfo  = []string{"ordinal", "minor_number", "uuid", "name", "GPU_I_ID", "jobid", "userid"}
 	eccLabels      = []string{"ordinal", "minor_number", "uuid", "name", "error", "counter"}
 	eccErrorType   = []string{nvml.MEMORY_ERROR_TYPE_CORRECTED: "corrected", nvml.MEMORY_ERROR_TYPE_UNCORRECTED: "uncorrected"}
 	eccCounterType = []string{nvml.VOLATILE_ECC: "volatile", nvml.AGGREGATE_ECC: "aggregate"}
+
+	gpmState    = make(map[string]int)
+	gpmSamples1 = make(map[string]nvml.GpmSample)
+	gpmSamples2 = make(map[string]nvml.GpmSample)
 )
 
 type Collector struct {
 	sync.Mutex
-	numDevices  prometheus.Gauge
-	usedMemory  *prometheus.GaugeVec
-	totalMemory *prometheus.GaugeVec
-	dutyCycle   *prometheus.GaugeVec
-	powerUsage  *prometheus.GaugeVec
-	temperature *prometheus.GaugeVec
-	fanSpeed    *prometheus.GaugeVec
-	eccErrors   *prometheus.GaugeVec
-	lastError   *prometheus.GaugeVec
-	jobId       *prometheus.GaugeVec
-	jobUid      *prometheus.GaugeVec
+	numDevices          prometheus.Gauge
+	usedMemory          *prometheus.GaugeVec
+	totalMemory         *prometheus.GaugeVec
+	dutyCycle           *prometheus.GaugeVec
+	powerUsage          *prometheus.GaugeVec
+	temperature         *prometheus.GaugeVec
+	fanSpeed            *prometheus.GaugeVec
+	eccErrors           *prometheus.GaugeVec
+	lastError           *prometheus.GaugeVec
+	jobId               *prometheus.GaugeVec
+	jobUid              *prometheus.GaugeVec
+	graphicsUtil        *prometheus.GaugeVec
+	smUtil              *prometheus.GaugeVec
+	smOccupancy         *prometheus.GaugeVec
+	integerUtil         *prometheus.GaugeVec
+	anyTensorUtil       *prometheus.GaugeVec
+	dramBwUtil          *prometheus.GaugeVec
+	fp64Util            *prometheus.GaugeVec
+	fp32Util            *prometheus.GaugeVec
+	fp16Util            *prometheus.GaugeVec
+	pcieTxPerSec        *prometheus.GaugeVec
+	pcieRxPerSec        *prometheus.GaugeVec
+	nvlinkTotalRxPerSec *prometheus.GaugeVec
+	nvlinkTotalTxPerSec *prometheus.GaugeVec
 }
 
 type Device struct {
@@ -142,6 +166,110 @@ func NewCollector() *Collector {
 			},
 			labelsJobInfo,
 		),
+		graphicsUtil: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "graphics_util_percent",
+				Help:      "Percentage of time any compute/graphics app was active on the GPU",
+			},
+			labelsJobInfo,
+		),
+		smUtil: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "sm_util_percent",
+				Help:      "Percentage of SMs that were busy",
+			},
+			labelsJobInfo,
+		),
+		smOccupancy: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "sm_occupancy_percent",
+				Help:      "Percentage of warps that were active vs theoretical maximum",
+			},
+			labelsJobInfo,
+		),
+		integerUtil: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "integer_util",
+				Help:      "Percentage of time the GPU's SMs were doing integer operations",
+			},
+			labelsJobInfo,
+		),
+		anyTensorUtil: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "any_tensor_util_percent",
+				Help:      "Percentage of time the GPU's SMs were doing ANY tensor operations",
+			},
+			labelsJobInfo,
+		),
+		dramBwUtil: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "dram_bw_util_percent",
+				Help:      "Percentage of DRAM bw used vs theoretical maximum",
+			},
+			labelsJobInfo,
+		),
+		fp64Util: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "fp64_util_percent",
+				Help:      "Percentage of time the GPU's SMs were doing non-tensor FP64 math",
+			},
+			labelsJobInfo,
+		),
+		fp32Util: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "fp32_util_percent",
+				Help:      "Percentage of time the GPU's SMs were doing non-tensor FP32 math",
+			},
+			labelsJobInfo,
+		),
+		fp16Util: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "fp16_util_percent",
+				Help:      "Percentage of time the GPU's SMs were doing non-tensor FP16 math",
+			},
+			labelsJobInfo,
+		),
+		pcieTxPerSec: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "pcie_tx_per_sec",
+				Help:      "PCIe traffic from this GPU in bytes/sec",
+			},
+			labelsJobInfo,
+		),
+		pcieRxPerSec: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "pcie_rx_per_sec",
+				Help:      "PCIe traffic to this GPU in bytes/sec",
+			},
+			labelsJobInfo,
+		),
+		nvlinkTotalRxPerSec: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "nvlink_total_rx_per_sec",
+				Help:      "NvLink read bandwidth for all links in bytes/sec",
+			},
+			labelsJobInfo,
+		),
+		nvlinkTotalTxPerSec: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "nvlink_total_tx_per_sec",
+				Help:      "NvLink write bandwidth for all links in bytes/sec",
+			},
+			labelsJobInfo,
+		),
 	}
 }
 
@@ -154,6 +282,23 @@ func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 	c.temperature.Describe(ch)
 	c.fanSpeed.Describe(ch)
 	c.lastError.Describe(ch)
+}
+
+func allocGpmSamples(uuid string) error {
+	err := nvml.SUCCESS
+	if _, exists := gpmSamples1[uuid]; !exists {
+		gpmSamples1[uuid], err = nvml.GpmSampleAlloc()
+		if err != nvml.SUCCESS {
+			log.Printf("GPU(%s) failed to allocate GpmSample1 with error: %v", uuid, err)
+			return err
+		}
+		gpmSamples2[uuid], err = nvml.GpmSampleAlloc()
+		if err != nvml.SUCCESS {
+			log.Printf("GPU(%s) failed to allocate GpmSample2 with error: %v", uuid, err)
+			return err
+		}
+	}
+	return err
 }
 
 func (c *Collector) Collect(ch chan<- prometheus.Metric) {
@@ -204,6 +349,30 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			continue
 		}
 
+		gpm, exists := gpmState[uuid]
+		if !exists {
+			if *disableGpm {
+				gpm = GPM_DISABLED
+			} else if gpuQuerySupport, ret := dev.GpmQueryDeviceSupport(); ret != nvml.SUCCESS {
+				log.Printf("GPU(%s) failed to return gpm status, disabling, error: %v", uuid, ret)
+				gpm = GPM_DISABLED
+			} else {
+				if gpuQuerySupport.IsSupportedDevice == 0 {
+					gpm = GPM_DISABLED
+				} else {
+					gpm = GPM_NO_DATA
+				}
+				log.Printf("GPU(%s) gpm = %d", uuid, gpm)
+			}
+			if gpm != GPM_DISABLED {
+				if allocGpmSamples(uuid) != nvml.SUCCESS {
+					log.Printf("GPU(%s) disabling gpm due to GpmSample alloc errors", uuid)
+					gpm = GPM_DISABLED
+				}
+			}
+			gpmState[uuid] = gpm
+		}
+
 		name, err := dev.GetName()
 		if err != nvml.SUCCESS {
 			log.Printf("Name(%s) error: %v", minor, err)
@@ -234,6 +403,30 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 					migUuid, err := migDev.GetUUID()
 					if err != nvml.SUCCESS {
 						log.Printf("UUID(minor=%d, mig=%d): error: %v", minorNumber, j, err)
+					}
+					// Check for GPM
+					gpmMig, exists := gpmState[migUuid]
+					if !exists {
+						if *disableGpm {
+							gpmMig = GPM_DISABLED
+						} else if gpuQuerySupport, ret := migDev.GpmQueryDeviceSupport(); ret != nvml.SUCCESS {
+							log.Printf("GPU(%s) failed to return gpm status, disabling, error: %v", migUuid, ret)
+							gpmMig = GPM_DISABLED
+						} else {
+							if gpuQuerySupport.IsSupportedDevice == 0 {
+								gpmMig = GPM_DISABLED
+							} else {
+								gpmMig = GPM_NO_DATA
+							}
+							log.Printf("GPU(%s) gpm = %v", migUuid, gpmMig)
+						}
+						if gpmMig != GPM_DISABLED {
+							if allocGpmSamples(migUuid) != nvml.SUCCESS {
+								log.Printf("GPU(%s) disabling gpm due to GpmSample alloc errors", migUuid)
+								gpmMig = GPM_DISABLED
+							}
+						}
+						gpmState[migUuid] = gpmMig
 					}
 					migName, err := migDev.GetName()
 					if err != nvml.SUCCESS {
@@ -370,6 +563,118 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			if fanSpeedAvailable {
 				c.fanSpeed.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(float64(fanSpeed))
 			}
+
+			// Collect gpm info
+			gpm = gpmState[oneDev.uuid]
+			var sample1 nvml.GpmSample = nil
+			var sample2 nvml.GpmSample = nil
+			if gpm != GPM_DISABLED {
+				var ret error
+				if (gpm == GPM_NO_DATA) || (gpm == GPM_SAMPLE1_SAMPLE2) {
+					ret = oneDev.device.GpmSampleGet(gpmSamples1[oneDev.uuid])
+				} else {
+					ret = oneDev.device.GpmSampleGet(gpmSamples2[oneDev.uuid])
+				}
+				if ret != nvml.SUCCESS {
+					log.Printf("GPU(%s) error collecting gpm samples: %v", uuid, ret)
+					continue
+				}
+				switch gpm {
+				case GPM_NO_DATA:
+					gpmState[oneDev.uuid] = GPM_SAMPLE1_ONLY
+				case GPM_SAMPLE1_ONLY, GPM_SAMPLE2_SAMPLE1:
+					gpmState[oneDev.uuid] = GPM_SAMPLE1_SAMPLE2
+					sample1 = gpmSamples1[oneDev.uuid]
+					sample2 = gpmSamples2[oneDev.uuid]
+				case GPM_SAMPLE1_SAMPLE2:
+					gpmState[oneDev.uuid] = GPM_SAMPLE2_SAMPLE1
+					sample2 = gpmSamples1[oneDev.uuid]
+					sample1 = gpmSamples2[oneDev.uuid]
+				}
+				if sample1 != nil && sample2 != nil {
+					gpmMetric := nvml.GpmMetricsGetType{
+						NumMetrics: 13,
+						Sample1:    sample1,
+						Sample2:    sample2,
+						Metrics: [nvml.GPM_METRIC_MAX]nvml.GpmMetric{
+							{
+								MetricId: uint32(nvml.GPM_METRIC_GRAPHICS_UTIL),
+							},
+							{
+								MetricId: uint32(nvml.GPM_METRIC_SM_UTIL),
+							},
+							{
+								MetricId: uint32(nvml.GPM_METRIC_SM_OCCUPANCY),
+							},
+							{
+								MetricId: uint32(nvml.GPM_METRIC_INTEGER_UTIL),
+							},
+							{
+								MetricId: uint32(nvml.GPM_METRIC_ANY_TENSOR_UTIL),
+							},
+							{
+								MetricId: uint32(nvml.GPM_METRIC_DRAM_BW_UTIL),
+							},
+							{
+								MetricId: uint32(nvml.GPM_METRIC_FP64_UTIL),
+							},
+							{
+								MetricId: uint32(nvml.GPM_METRIC_FP32_UTIL),
+							},
+							{
+								MetricId: uint32(nvml.GPM_METRIC_FP16_UTIL),
+							},
+							{
+								MetricId: uint32(nvml.GPM_METRIC_PCIE_TX_PER_SEC),
+							},
+							{
+								MetricId: uint32(nvml.GPM_METRIC_PCIE_RX_PER_SEC),
+							},
+							{
+								MetricId: uint32(nvml.GPM_METRIC_NVLINK_TOTAL_RX_PER_SEC),
+							},
+							{
+								MetricId: uint32(nvml.GPM_METRIC_NVLINK_TOTAL_TX_PER_SEC),
+							},
+						},
+					}
+					ret = nvml.GpmMetricsGet(&gpmMetric)
+					if ret != nvml.SUCCESS {
+						log.Printf("GPU(%s) failed to get gpm metrics: %v", oneDev.uuid, ret)
+					} else {
+						for i := 0; i < int(gpmMetric.NumMetrics); i++ {
+							switch int(gpmMetric.Metrics[i].MetricId) {
+							case int(nvml.GPM_METRIC_GRAPHICS_UTIL):
+								c.graphicsUtil.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+							case int(nvml.GPM_METRIC_SM_UTIL):
+								c.smUtil.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+							case int(nvml.GPM_METRIC_SM_OCCUPANCY):
+								c.smOccupancy.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+							case int(nvml.GPM_METRIC_INTEGER_UTIL):
+								c.integerUtil.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+							case int(nvml.GPM_METRIC_ANY_TENSOR_UTIL):
+								c.anyTensorUtil.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+							case int(nvml.GPM_METRIC_DRAM_BW_UTIL):
+								c.dramBwUtil.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+							case int(nvml.GPM_METRIC_FP64_UTIL):
+								c.fp64Util.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+							case int(nvml.GPM_METRIC_FP32_UTIL):
+								c.fp32Util.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+							case int(nvml.GPM_METRIC_FP16_UTIL):
+								c.fp16Util.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+							case int(nvml.GPM_METRIC_PCIE_TX_PER_SEC):
+								c.pcieTxPerSec.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value * 1024 * 1024)
+							case int(nvml.GPM_METRIC_PCIE_RX_PER_SEC):
+								c.pcieRxPerSec.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value * 1024 * 1024)
+							case int(nvml.GPM_METRIC_NVLINK_TOTAL_RX_PER_SEC):
+								c.nvlinkTotalRxPerSec.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value * 1024 * 1024)
+							case int(nvml.GPM_METRIC_NVLINK_TOTAL_TX_PER_SEC):
+								c.nvlinkTotalTxPerSec.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value * 1024 * 1024)
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 	c.usedMemory.Collect(ch)
@@ -382,6 +687,19 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	c.lastError.Collect(ch)
 	c.jobId.Collect(ch)
 	c.jobUid.Collect(ch)
+	c.graphicsUtil.Collect(ch)
+	c.smUtil.Collect(ch)
+	c.smOccupancy.Collect(ch)
+	c.integerUtil.Collect(ch)
+	c.anyTensorUtil.Collect(ch)
+	c.dramBwUtil.Collect(ch)
+	c.fp64Util.Collect(ch)
+	c.fp32Util.Collect(ch)
+	c.fp16Util.Collect(ch)
+	c.pcieTxPerSec.Collect(ch)
+	c.pcieRxPerSec.Collect(ch)
+	c.nvlinkTotalRxPerSec.Collect(ch)
+	c.nvlinkTotalTxPerSec.Collect(ch)
 }
 
 func metricsHandler() http.HandlerFunc {
