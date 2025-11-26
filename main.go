@@ -645,23 +645,23 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 						for i := 0; i < int(gpmMetric.NumMetrics); i++ {
 							switch int(gpmMetric.Metrics[i].MetricId) {
 							case int(nvml.GPM_METRIC_GRAPHICS_UTIL):
-								c.graphicsUtil.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+								c.graphicsUtil.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value)
 							case int(nvml.GPM_METRIC_SM_UTIL):
-								c.smUtil.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+								c.smUtil.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value)
 							case int(nvml.GPM_METRIC_SM_OCCUPANCY):
-								c.smOccupancy.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+								c.smOccupancy.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value)
 							case int(nvml.GPM_METRIC_INTEGER_UTIL):
-								c.integerUtil.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+								c.integerUtil.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value)
 							case int(nvml.GPM_METRIC_ANY_TENSOR_UTIL):
-								c.anyTensorUtil.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+								c.anyTensorUtil.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value)
 							case int(nvml.GPM_METRIC_DRAM_BW_UTIL):
-								c.dramBwUtil.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+								c.dramBwUtil.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value)
 							case int(nvml.GPM_METRIC_FP64_UTIL):
-								c.fp64Util.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+								c.fp64Util.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value)
 							case int(nvml.GPM_METRIC_FP32_UTIL):
-								c.fp32Util.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+								c.fp32Util.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value)
 							case int(nvml.GPM_METRIC_FP16_UTIL):
-								c.fp16Util.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value / 100.0)
+								c.fp16Util.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value)
 							case int(nvml.GPM_METRIC_PCIE_TX_PER_SEC):
 								c.pcieTxPerSec.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(gpmMetric.Metrics[i].Value * 1024 * 1024)
 							case int(nvml.GPM_METRIC_PCIE_RX_PER_SEC):
