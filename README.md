@@ -35,3 +35,35 @@ their location.
 
 By default the metrics are exposed on `localhost:9445/metrics`. The port can be
 modified using the `-web.listen-address` flag.
+
+## Alerts
+The collector allows us to alert on some of the bad states the GPU might be in. The following are ones we currently use:
+```
+  - alert: GPUError
+    expr: nvidia_gpu_last_error > 0
+    for: '0m'
+    labels:
+      severity: warning
+      alerttype: hardware
+    annotations:
+      summary: 'GPU{{ $labels.minor_number }} error while collecting data on {{ reReplaceAll ":.*" "" $labels.instance }}'
+      description: 'Host {{ reReplaceAll ":.*" "" $labels.instance }} had error {{ printf "%.f" $value }} while fetching GPU metrics from GPU{{ $labels.minor_number }}'
+  - alert: GPUECCError
+    expr: nvidia_gpu_ecc_errors{counter="volatile",error="uncorrected"} > 0
+    for: '0m'
+    labels:
+      severity: warning
+      alerttype: hardware
+    annotations:
+      summary: 'GPU{{ $labels.minor_number }} Uncorrected ECC error on {{ reReplaceAll ":.*" "" $labels.instance }}'
+      description: 'Host {{ reReplaceAll ":.*" "" $labels.instance }} has {{ printf "%.f" $value }} uncorrected ECC errors on GPU{{ $labels.minor_number }}'
+  - alert: GPUClockError
+    expr: nvidia_gpu_clock_event_reason{reason=~".*slowdown.*"} > 31
+    for: '5m'
+    labels:
+      severity: warning
+      alerttype: hardware
+    annotations:
+      summary: 'GPU{{ $labels.minor_number }} Clock Problem {{ $labels.reason }} on {{ reReplaceAll ":.*" "" $labels.instance }}'
+      description: 'Host {{ reReplaceAll ":.*" "" $labels.instance }} has {{ $labels.reason }} clock error on GPU{{ $labels.minor_number }}'
+```
