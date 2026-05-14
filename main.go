@@ -30,11 +30,31 @@ var (
 	disableExporterMetrics = flag.Bool("web.disable-exporter-metrics", false, "Exclude metrics about the exporter itself (promhttp_*, process_*, go_*)")
 	disableGpm             = flag.Bool("disable.gpm", false, "Disable GPM metrics (which are available on Hopper and newer GPUs).")
 
-	labels         = []string{"ordinal", "minor_number", "uuid", "name", "GPU_I_ID"}
-	labelsJobInfo  = []string{"ordinal", "minor_number", "uuid", "name", "GPU_I_ID", "jobid", "userid"}
-	eccLabels      = []string{"ordinal", "minor_number", "uuid", "name", "error", "counter"}
+	labels        = []string{"ordinal", "minor_number", "uuid", "name", "GPU_I_ID"}
+	labelsJobInfo = []string{"ordinal", "minor_number", "uuid", "name", "GPU_I_ID", "jobid", "userid"}
+	// Adds type that can be graphics, sm, mem, video
+	labelsJobInfoType = []string{"ordinal", "minor_number", "uuid", "name", "GPU_I_ID", "jobid", "userid", "type"}
+	// Adds reason, e.g. for clock event reason
+	labelsJobInfoReason = []string{"ordinal", "minor_number", "uuid", "name", "GPU_I_ID", "jobid", "userid", "reason"}
+	eccLabels           = []string{"ordinal", "minor_number", "uuid", "name", "error", "counter"}
+
 	eccErrorType   = []string{nvml.MEMORY_ERROR_TYPE_CORRECTED: "corrected", nvml.MEMORY_ERROR_TYPE_UNCORRECTED: "uncorrected"}
 	eccCounterType = []string{nvml.VOLATILE_ECC: "volatile", nvml.AGGREGATE_ECC: "aggregate"}
+
+	clockReasons = map[uint64]string{
+		nvml.ClocksEventReasonApplicationsClocksSetting: "application",
+		nvml.ClocksEventReasonDisplayClockSetting:       "limited",
+		nvml.ClocksEventReasonGpuIdle:                   "idle",
+		nvml.ClocksEventReasonNone:                      "none",
+		nvml.ClocksEventReasonSwPowerCap:                "swpowercap",
+		nvml.ClocksEventReasonSwThermalSlowdown:         "swthermalslowdown",
+		nvml.ClocksEventReasonSyncBoost:                 "syncboost",
+		nvml.ClocksThrottleReasonHwPowerBrakeSlowdown:   "hwpowerbrakeslowdown",
+		nvml.ClocksThrottleReasonHwSlowdown:             "hwslowdown",
+		nvml.ClocksThrottleReasonHwThermalSlowdown:      "hwthermalslowdown",
+	}
+
+	clockTypes = map[nvml.ClockType]string{nvml.CLOCK_GRAPHICS: "graphics", nvml.CLOCK_SM: "sm", nvml.CLOCK_MEM: "mem", nvml.CLOCK_VIDEO: "video"}
 
 	gpmState    = make(map[string]int)
 	gpmSamples1 = make(map[string]nvml.GpmSample)
@@ -50,6 +70,8 @@ type Collector struct {
 	powerUsage          *prometheus.GaugeVec
 	temperature         *prometheus.GaugeVec
 	fanSpeed            *prometheus.GaugeVec
+	clock               *prometheus.GaugeVec
+	clockEventReason    *prometheus.GaugeVec
 	eccErrors           *prometheus.GaugeVec
 	lastError           *prometheus.GaugeVec
 	jobId               *prometheus.GaugeVec
@@ -133,6 +155,22 @@ func NewCollector() *Collector {
 				Help:      "Fanspeed of the GPU device as a percent of its maximum",
 			},
 			labelsJobInfo,
+		),
+		clock: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "clock",
+				Help:      "Clock speed",
+			},
+			labelsJobInfoType,
+		),
+		clockEventReason: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "clock_event_reason",
+				Help:      "Bitmask of active clocks event reasons, check NvmlClocksEventReasons",
+			},
+			labelsJobInfoReason,
 		),
 		eccErrors: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
@@ -281,6 +319,8 @@ func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 	c.powerUsage.Describe(ch)
 	c.temperature.Describe(ch)
 	c.fanSpeed.Describe(ch)
+	c.clock.Describe(ch)
+	c.clockEventReason.Describe(ch)
 	c.lastError.Describe(ch)
 }
 
@@ -312,6 +352,8 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	c.powerUsage.Reset()
 	c.temperature.Reset()
 	c.fanSpeed.Reset()
+	c.clock.Reset()
+	c.clockEventReason.Reset()
 	c.lastError.Reset()
 
 	numDevices, err := nvml.DeviceGetCount()
@@ -470,6 +512,33 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			fanSpeedAvailable = true
 		}
 
+		clocks := make(map[nvml.ClockType]uint32)
+		for clock_type := range clockTypes {
+			clock, err := dev.GetClockInfo(clock_type)
+			if err == nvml.SUCCESS {
+				clocks[clock_type] = clock
+			}
+		}
+
+		var clockEventReasonAvailable bool = false
+		var clockEventReasonStr string
+		clockEventReason, err := dev.GetCurrentClocksEventReasons()
+		if err == nvml.SUCCESS {
+			clockEventReasonAvailable = true
+			if clockEventReason > 0 {
+				for descBit, desc := range clockReasons {
+					if (clockEventReason & descBit) != 0 {
+						if clockEventReasonStr != "" {
+							clockEventReasonStr += ","
+						}
+						clockEventReasonStr += desc
+					}
+				}
+			} else {
+				clockEventReasonStr = "none"
+			}
+		}
+
 		for _, err_type := range [2]nvml.MemoryErrorType{nvml.MEMORY_ERROR_TYPE_CORRECTED, nvml.MEMORY_ERROR_TYPE_UNCORRECTED} {
 			for _, count_type := range []nvml.EccCounterType{nvml.VOLATILE_ECC, nvml.AGGREGATE_ECC} {
 				errCount, err := dev.GetTotalEccErrors(err_type, count_type)
@@ -562,6 +631,12 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 			}
 			if fanSpeedAvailable {
 				c.fanSpeed.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid).Set(float64(fanSpeed))
+			}
+			for clock_type, value := range clocks {
+				c.clock.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid, clockTypes[clock_type]).Set(float64(value))
+			}
+			if clockEventReasonAvailable {
+				c.clockEventReason.WithLabelValues(ordinal, minor, oneDev.uuid, oneDev.name, oneDev.instanceId, jobId, jobUid, clockEventReasonStr).Set(float64(clockEventReason))
 			}
 
 			// Collect gpm info
@@ -683,6 +758,8 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	c.powerUsage.Collect(ch)
 	c.temperature.Collect(ch)
 	c.fanSpeed.Collect(ch)
+	c.clock.Collect(ch)
+	c.clockEventReason.Collect(ch)
 	c.eccErrors.Collect(ch)
 	c.lastError.Collect(ch)
 	c.jobId.Collect(ch)
