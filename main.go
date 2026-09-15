@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +30,8 @@ var (
 	addr                   = flag.String("web.listen-address", ":9445", "Address to listen on for web interface and telemetry.")
 	disableExporterMetrics = flag.Bool("web.disable-exporter-metrics", false, "Exclude metrics about the exporter itself (promhttp_*, process_*, go_*)")
 	disableGpm             = flag.Bool("disable.gpm", false, "Disable GPM metrics (which are available on Hopper and newer GPUs).")
+
+	version = ""
 
 	labels        = []string{"ordinal", "minor_number", "uuid", "name", "GPU_I_ID"}
 	labelsJobInfo = []string{"ordinal", "minor_number", "uuid", "name", "GPU_I_ID", "jobid", "userid"}
@@ -804,8 +807,29 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	c.nvlinkTotalTxPerSec.Collect(ch)
 }
 
+func getCommit() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.revision" {
+				return setting.Value
+			}
+		}
+	}
+	return ""
+}
+
 func main() {
+	if version == "" {
+		version = getCommit()
+	}
+
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of nvidia_gpu_prometheus_exporter, version %s\n", version)
+		flag.PrintDefaults()
+	}
 	flag.Parse()
+
+	log.Printf("nvidia_gpu_prometheus_exporter version %s", version)
 
 	if err := nvml.Init(); err != nvml.SUCCESS {
 		log.Fatalf("Couldn't initialize nvml: %v. Make sure NVML is in the shared library search path.", err)
